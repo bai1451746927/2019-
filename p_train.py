@@ -18,12 +18,19 @@
 此模块用于训练关系分类模型
 """
 
+# -*- coding: utf-8 -*-
+"""
+Spyder Editor
+
+This is a temporary script file.
+"""
+
 import json
 import os
 import sys
 import time
 import argparse
-import ConfigParser
+import configparser
 
 import paddle
 import paddle.fluid as fluid
@@ -34,6 +41,7 @@ import p_model
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../lib")))
 import conf_lib
+
 
 
 def train(conf_dict, data_reader, use_cuda=False):
@@ -51,20 +59,21 @@ def train(conf_dict, data_reader, use_cuda=False):
     target = fluid.layers.data(
         name='target', shape=[label_dict_len], dtype='float32', lod_level=0)
     # NN:词嵌入+ lstm + 池化
-    feature_out = p_model.db_lstm(data_reader, word, postag, conf_dict)
+    feature_out = p_model.db_lstm(data_reader, word, postag, conf_dict)#模型导入，这里面存放着一个网络
+    print("词嵌入+ lstm + 池化")
     # 多标签分类的损失函数
     class_cost = fluid.layers.sigmoid_cross_entropy_with_logits(x=feature_out, \
-        label=target)#sigmoid逻辑交叉熵损失
-    avg_cost = fluid.layers.mean(class_cost)#平均交叉熵损失
+        label=target)#sigmoid逻辑交叉熵损失，模型导入2
+    avg_cost = fluid.layers.mean(class_cost)#平均交叉熵损失，模型导入3,也是网络
     #优化方法（sgd，adam）
     sgd_optimizer = fluid.optimizer.AdamOptimizer(
         learning_rate=2e-3, )
 
-    sgd_optimizer.minimize(avg_cost)
+    sgd_optimizer.minimize(avg_cost)#模型导入4，这里是优化了的网络
 
     train_batch_reader = paddle.batch(
         paddle.reader.shuffle(data_reader.get_train_reader(), buf_size=8192),
-        batch_size=conf_dict['batch_size'])
+        batch_size=conf_dict['batch_size'])#里面存放的是函数
 
     place = fluid.CUDAPlace(0) if use_cuda else fluid.CPUPlace()#c/gpu
     feeder = fluid.DataFeeder(feed_list=[word, postag, target], place=place)#数据反馈
@@ -78,23 +87,26 @@ def train(conf_dict, data_reader, use_cuda=False):
 
         start_time = time.time()#计时
         batch_id = 0#统计开始
-        for pass_id in six.moves.xrange(conf_dict['pass_num']):#xrange返回的是一个个数据
+        for pass_id in six.moves.xrange(conf_dict['pass_num']):#xrange返回的是一个个数据，目前是100
             pass_start_time = time.time()#计时
             cost_sum, cost_counter = 0, 0
-            for data in train_batch_reader():
-                cost = exe.run(main_program, feed=feeder.feed(data), fetch_list=[avg_cost])#损失值
+            for data in train_batch_reader():#173
+#                 print(data_reader.get_train_reader())
+                cost = exe.run(main_program, feed=feeder.feed(data), fetch_list=[avg_cost])#损失值，模型导入4,这里是程序的执行程序
+                """fetch_list是返回值，这里使用avg_cost可以直接得到cost的平均值的返回值"""
                 cost = cost[0]
                 cost_sum += cost#损失值结果统计
                 cost_counter += 1#损失值次数统计
                 if batch_id % 10 == 0 and batch_id != 0:
-                    print >> sys.stderr, "batch %d finished, second per batch: %02f" % (
-                        batch_id, (time.time() - start_time) / batch_id)
+                    print("batch %d finished, second per batch: %02f" % (
+                        batch_id, (time.time() - start_time) / batch_id),file=sys.stderr)
 
                 # 根据损失值大小决定要不要结束训练
                 if float(cost) < 0.01:
                     pass_avg_cost = cost_sum / cost_counter if cost_counter > 0 else 0.0
-                    print >> sys.stderr, "%d pass end, cost time: %02f, avg_cost: %f" % (
-                        pass_id, time.time() - pass_start_time, pass_avg_cost)
+                    print( "%d pass end, cost time: %02f, avg_cost: %f" % (
+                        pass_id, time.time() - pass_start_time, pass_avg_cost),file=sys.stderr)
+                    #大概一批次为3分钟，跑一轮大概9个小时
                     save_path = os.path.join(save_dirname, 'final')
                     fluid.io.save_inference_model(save_path, ['word_data', 'token_pos'],
                                                   [feature_out], exe, params_filename='params')
@@ -103,8 +115,8 @@ def train(conf_dict, data_reader, use_cuda=False):
 
             # 每次传递结束后保存模型
             pass_avg_cost = cost_sum / cost_counter if cost_counter > 0 else 0.0
-            print >> sys.stderr, "%d pass end, cost time: %02f, avg_cost: %f" % (
-                pass_id, time.time() - pass_start_time, pass_avg_cost)
+            print( "%d pass end, cost time: %02f, avg_cost: %f" % (
+                pass_id, time.time() - pass_start_time, pass_avg_cost),file=sys.stderr)
             save_path = os.path.join(save_dirname, 'pass_%04d-%f' %
                                     (pass_id, pass_avg_cost))
             fluid.io.save_inference_model(save_path, ['word_data', 'token_pos'],
@@ -123,7 +135,21 @@ def train(conf_dict, data_reader, use_cuda=False):
 def main(conf_dict, use_cuda=False):
     """训练主函数"""
     if use_cuda and not fluid.core.is_compiled_with_cuda():
-        print >> sys.stderr, 'No GPU'
+        print( 'No GPU',file=sys.stderr)
+        return
+    data_generator = p_data_reader.RcDataReader(
+        wordemb_dict_path=conf_dict['word_idx_path'],
+        postag_dict_path=conf_dict['postag_dict_path'],
+        label_dict_path=conf_dict['label_dict_path'],
+        train_data_list_path=conf_dict['train_data_path'],
+        test_data_list_path=conf_dict['test_data_path'])
+    
+    train(conf_dict, data_generator, use_cuda=use_cuda)
+
+def main(conf_dict, use_cuda=False):
+    """训练主函数"""
+    if use_cuda and not fluid.core.is_compiled_with_cuda():
+        print( 'No GPU',file=sys.stderr)
         return
     data_generator = p_data_reader.RcDataReader(
         wordemb_dict_path=conf_dict['word_idx_path'],
@@ -145,3 +171,4 @@ if __name__ == '__main__':
     conf_dict = conf_lib.load_conf(args.conf_path)
     use_gpu = True if conf_dict.get('use_gpu', 'False') == 'True' else False
     main(conf_dict, use_cuda=use_gpu)
+
